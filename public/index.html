@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Start Page</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <style>
+        [v-cloak] { display: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 基础毛玻璃 */
+        .glass {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+        .glass-panel {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        /* 3D 翻转容器 */
+        .flip-container {
+            perspective: 1000px;
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        .flipper {
+            transition: 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275); /* 弹性动画 */
+            transform-style: preserve-3d;
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        .flipper.flipped {
+            transform: rotateY(180deg);
+        }
+        .front, .back {
+            backface-visibility: hidden;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        
+        /* === 核心修复：层级与交互控制 === */
+        .front {
+            z-index: 2;
+            transform: rotateY(0deg);
+            transition: z-index 0s 0.4s; 
+        }
+        .back {
+            transform: rotateY(180deg);
+            background: rgba(0,0,0,0.4); 
+            z-index: 1;
+        }
+
+        .flipper.flipped .front {
+            z-index: 1;
+            pointer-events: none; 
+        }
+        .flipper.flipped .back {
+            z-index: 10; 
+            pointer-events: auto;
+        }
+
+        .scroll-view {
+            overflow-y: auto;
+            overscroll-behavior: contain; 
+            -webkit-overflow-scrolling: touch; 
+            will-change: scroll-position; 
+            transform: translateZ(0); 
+        }
+
+        /* 抖动动画 */
+        @keyframes wiggle {
+            0% { transform: rotate(0deg); }
+            25% { transform: rotate(-2deg); }
+            50% { transform: rotate(0deg); }
+            75% { transform: rotate(2deg); }
+            100% { transform: rotate(0deg); }
+        }
+        .wiggle {
+            animation: wiggle 0.3s infinite ease-in-out;
+        }
+        
+        .ghost { opacity: 0; }
+        .list-move { transition: transform 0.3s; }
+        .text-shadow { text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, -20px); }
+        
+        /* 选中态样式 */
+        .selected-ring {
+            box-shadow: 0 0 0 2px #6366f1, 0 0 0 4px rgba(99, 102, 241, 0.3);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        /* 拖拽进入分组的高亮样式 */
+        .drag-target-active {
+            background: rgba(99, 102, 241, 0.2); /* Indigo-500 with opacity */
+            border: 2px dashed rgba(99, 102, 241, 0.5);
+            border-radius: 1rem;
+        }
+    </style>
+</head>
+<body class="bg-cover bg-center bg-fixed bg-no-repeat min-h-screen overflow-hidden text-white selection:bg-indigo-500 selection:text-white"
+      style="background-image: url('https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN');">
+
+<!-- 全局右键监听 -->
+<div id="app" v-cloak class="h-screen w-full relative">
+
+    <!-- 全局提示框 (Toast) -->
+    <transition name="toast">
+        <div v-if="notification.show" class="fixed top-8 left-1/2 -translate-x-1/2 z-[70] glass-panel px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 pointer-events-none min-w-[200px] justify-center border border-white/20">
+            <i class="ph-fill text-xl" :class="notification.type === 'success' ? 'ph-check-circle text-green-400' : 'ph-warning-circle text-yellow-400'"></i>
+            <span class="text-sm font-bold tracking-wide">{{ notification.message }}</span>
+        </div>
+    </transition>
+
+    <div class="flip-container">
+        <div class="flipper" :class="{ 'flipped': showAllBookmarks }">
+            
+            <!-- ================= 正面：首页 (Home) ================= -->
+            <div class="front flex flex-col">
+                <!-- 顶部时间 -->
+                <div class="flex-none pt-12 pb-6 flex flex-col items-center justify-center z-10">
+                    <h1 class="text-7xl md:text-8xl font-thin tracking-wider text-shadow font-mono select-none">{{ currentTime }}</h1>
+                    <p class="text-lg md:text-xl font-light opacity-90 text-shadow-sm mt-2 select-none">{{ currentDate }}</p>
+                </div>
+
+                <!-- 搜索框 -->
+                <div class="flex-none px-4 mb-8 z-10">
+                    <div class="glass max-w-2xl mx-auto rounded-full flex items-center p-1 transition-all focus-within:bg-white/30 focus-within:shadow-xl">
+                        <button @click.stop="switchEngine" class="p-3 rounded-full hover:bg-white/20 transition shrink-0">
+                            <i :class="searchEngine.icon" class="text-2xl"></i>
+                        </button>
+                        <input type="text" v-model="searchText" @keyup.enter="doSearch" @keydown.stop @contextmenu.stop
+                            :placeholder="`在 ${searchEngine.name} 上搜索...`"
+                            class="w-full bg-transparent border-none outline-none text-white placeholder-white/70 px-4 text-lg h-12">
+                        <button @click.stop="doSearch" class="p-3 rounded-full hover:bg-white/20 transition shrink-0">
+                            <i class="ph ph-magnifying-glass text-2xl"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 常用应用网格 (Pinned) -->
+                <div class="flex-grow scroll-view px-4 pb-20 z-10" @click="exitEditMode">
+                    <div class="max-w-5xl mx-auto">
+                        <transition-group name="list" tag="div" 
+                            v-if="pinnedBookmarks.length > 0" 
+                            class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-6 p-4">
+                            
+                            <div v-for="(bm, index) in pinnedBookmarks" :key="bm.id"
+                                 class="group flex flex-col items-center gap-2 cursor-pointer relative"
+                                 :class="{ 'wiggle': isEditMode && !showAllBookmarks }"
+                                 :draggable="isEditMode && !showAllBookmarks"
+                                 @dragstart="onDragStart($event, bm, 'pinned')"
+                                 @dragenter.prevent="onDragEnter(bm)"
+                                 @dragover.prevent
+                                 @dragend="onDragEnd"
+                                 @touchstart="startLongPress(bm)"
+                                 @touchend="cancelLongPress"
+                                 @mousedown="startLongPress(bm)"
+                                 @mouseup="cancelLongPress"
+                                 @click="handleItemClick(bm, $event)"
+                                 @contextmenu.stop.prevent="handleItemContextMenu(bm)">
+                                
+                                <button v-if="isEditMode && !showAllBookmarks" @click.stop="deleteBookmark(bm.id)" 
+                                    class="absolute -top-2 -right-2 bg-red-500 rounded-full w-6 h-6 flex items-center justify-center z-20 shadow-md animate-bounce">
+                                    <i class="ph-bold ph-minus text-white text-xs"></i>
+                                </button>
+
+                                <div class="glass w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center group-hover:bg-white/30 transition shadow-lg relative overflow-hidden">
+                                    <img :src="getIcon(bm)" class="w-10 h-10 rounded-lg object-contain" onerror="this.src='https://unpkg.com/@phosphor-icons/core/assets/regular/globe.svg'">
+                                </div>
+                                <span class="text-xs md:text-sm text-center text-shadow-sm opacity-90 truncate w-full px-1 select-none">{{ bm.title }}</span>
+                            </div>
+
+                            <div key="add-btn" @click="openAddModal" class="flex flex-col items-center gap-2 cursor-pointer opacity-60 hover:opacity-100 transition">
+                                <div class="w-16 h-16 md:w-20 md:h-20 rounded-2xl border-2 border-dashed border-white/40 flex items-center justify-center hover:bg-white/10">
+                                    <i class="ph ph-plus text-2xl"></i>
+                                </div>
+                                <span class="text-xs md:text-sm text-center text-shadow-sm select-none">添加</span>
+                            </div>
+                        </transition-group>
+                    </div>
+                </div>
+                
+                <div class="absolute bottom-6 w-full text-center text-white/40 text-xs select-none pointer-events-none">
+                    右键空白处 / 长按应用进入编辑
+                </div>
+            </div>
+
+            <!-- ================= 背面：全部收藏 (All Apps) ================= -->
+            <div class="back flex flex-col bg-black/40 backdrop-blur-xl">
+                <!-- 顶部导航 -->
+                <div class="flex items-center justify-between p-6 glass border-b border-white/10">
+                    <h2 class="text-2xl font-bold">全部收藏</h2>
+                    <div class="flex gap-3">
+                         <div class="relative">
+                            <i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-white/50"></i>
+                            <input v-model="drawerSearch" @contextmenu.stop type="text" placeholder="筛选..." class="bg-white/10 rounded-full pl-9 pr-4 py-2 text-sm outline-none focus:bg-white/20 transition w-48">
+                         </div>
+                        <button @click="showAllBookmarks = false" class="p-2 rounded-full hover:bg-white/20 transition">
+                            <i class="ph ph-x text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 抽屉内容 -->
+                <div class="flex-grow scroll-view p-6 min-h-0 pb-24" @click="exitEditMode">
+                    <div class="max-w-6xl mx-auto space-y-8">
+                        <!-- 循环渲染排好序的分类 -->
+                        <div v-for="(group, index) in filteredDrawerList" :key="group.name"
+                             class="rounded-xl transition-colors duration-200 p-2 -m-2"
+                             :class="{ 'drag-target-active': dragOverCategory === group.name }"
+                             @dragover.prevent
+                             @dragenter.prevent="onDrawerDragEnter(group.name)"
+                             @drop="onDrawerDrop(group.name)">
+                             
+                            <!-- 分类标题 & 排序按钮 -->
+                            <h3 class="text-lg font-bold text-white/80 mb-4 pl-2 border-l-4 border-indigo-500 flex items-center gap-2 group">
+                                {{ group.name }}
+                                <div v-if="isAuthenticated && isEditMode && showAllBookmarks" class="flex gap-1 ml-2">
+                                    <button @click.stop="moveCategory(group.name, -1)" class="p-1 hover:bg-white/20 rounded" title="上移"><i class="ph-bold ph-caret-up"></i></button>
+                                    <button @click.stop="moveCategory(group.name, 1)" class="p-1 hover:bg-white/20 rounded" title="下移"><i class="ph-bold ph-caret-down"></i></button>
+                                </div>
+                                <button v-if="isAuthenticated && !isEditMode" @click.stop="renameCategory(group.name, group.items)" class="opacity-0 group-hover:opacity-100 transition text-sm text-white/50 hover:text-white" title="重命名分类">
+                                    <i class="ph-bold ph-pencil-simple"></i>
+                                </button>
+                            </h3>
+                            
+                            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                                <div v-for="bm in group.items" :key="bm.id" 
+                                     class="glass p-3 rounded-xl flex items-center gap-3 hover:bg-white/20 transition cursor-pointer group relative"
+                                     :class="{ 'selected-ring': selectedIds.has(bm.id), 'wiggle': isEditMode && showAllBookmarks }"
+                                     :draggable="isEditMode && showAllBookmarks"
+                                     @dragstart="onDragStart($event, bm, 'drawer')"
+                                     @dragend="onDragEnd"
+                                     @click.stop="handleItemClick(bm, $event)"
+                                     @touchstart="startLongPress(bm)"
+                                     @touchend="cancelLongPress"
+                                     @mousedown="startLongPress(bm)"
+                                     @mouseup="cancelLongPress"
+                                     @contextmenu.stop.prevent="handleItemContextMenu(bm)">
+                                    
+                                    <!-- 编辑模式下的多选框 -->
+                                    <div v-if="isEditMode && showAllBookmarks" class="absolute top-2 left-2 z-20">
+                                        <div class="w-5 h-5 rounded border border-white/50 flex items-center justify-center" 
+                                             :class="selectedIds.has(bm.id) ? 'bg-indigo-500 border-indigo-500' : 'bg-black/20'">
+                                            <i class="ph-bold ph-check text-xs" v-if="selectedIds.has(bm.id)"></i>
+                                        </div>
+                                    </div>
+
+                                    <img :src="getIcon(bm)" class="w-8 h-8 rounded bg-white/10 p-1 flex-shrink-0" onerror="this.src='https://unpkg.com/@phosphor-icons/core/assets/regular/globe.svg'">
+                                    <div class="min-w-0 flex-1">
+                                        <div class="font-medium truncate text-sm">{{ bm.title }}</div>
+                                        <div class="text-xs text-white/50 truncate">{{ bm.description || bm.url }}</div>
+                                    </div>
+                                    
+                                    <!-- 快速置顶 (非编辑模式显示) -->
+                                    <button v-if="isAuthenticated && !isEditMode" @click.stop="togglePin(bm)" 
+                                            class="ml-auto p-1 rounded-full hover:bg-white/10 transition flex-shrink-0"
+                                            :class="bm.is_pinned ? 'text-yellow-400' : 'text-white/20 hover:text-white/60'">
+                                        <i class="ph-fill" :class="bm.is_pinned ? 'ph-star' : 'ph-star'"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 底部批量操作栏 (仅在抽屉编辑模式显示) -->
+                <transition name="toast">
+                    <div v-if="isEditMode && showAllBookmarks" class="absolute bottom-6 left-1/2 -translate-x-1/2 glass-panel px-6 py-3 rounded-2xl flex items-center gap-6 shadow-2xl border border-white/20 z-50">
+                        <button @click="toggleSelectAll" class="flex flex-col items-center gap-1 hover:text-indigo-400 transition min-w-[40px]">
+                            <i class="ph-fill ph-checks text-xl"></i>
+                            <span class="text-[10px]">全选</span>
+                        </button>
+                        <div class="w-px h-8 bg-white/20"></div>
+                        <button @click="batchMove" class="flex flex-col items-center gap-1 hover:text-blue-400 transition min-w-[40px]" :class="{'opacity-50': selectedIds.size === 0}">
+                            <i class="ph-fill ph-folder-notch-plus text-xl"></i>
+                            <span class="text-[10px]">移动</span>
+                        </button>
+                        <button @click="batchDelete" class="flex flex-col items-center gap-1 hover:text-red-400 transition min-w-[40px]" :class="{'opacity-50': selectedIds.size === 0}">
+                            <i class="ph-fill ph-trash text-xl"></i>
+                            <span class="text-[10px]">删除</span>
+                        </button>
+                        <div class="w-px h-8 bg-white/20"></div>
+                        <button @click="isEditMode = false; selectedIds.clear()" class="flex flex-col items-center gap-1 hover:text-white/80 transition min-w-[40px]">
+                            <i class="ph-bold ph-x text-xl"></i>
+                            <span class="text-[10px]">退出</span>
+                        </button>
+                    </div>
+                </transition>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右下角设置按钮 -->
+    <div class="fixed bottom-6 right-6 z-50" v-if="!isEditMode">
+        <button @click="openSettings" class="glass w-12 h-12 rounded-full flex items-center justify-center hover:bg-white/30 transition shadow-lg">
+            <i class="ph-fill ph-user text-xl"></i>
+        </button>
+    </div>
+
+    <!-- 修改密码模态框 -->
+    <div v-if="showChangePassModal" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+        <div class="glass-panel rounded-2xl w-full max-w-sm p-8 shadow-2xl text-center">
+            <div class="mb-4">
+                <div class="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-2xl animate-pulse">
+                    <i class="ph-bold ph-lock-key-open"></i>
+                </div>
+                <h3 class="text-xl font-bold">修改默认密码</h3>
+                <p class="text-xs text-white/60 mt-1">为了安全，请立即设置一个新的访问密码</p>
+            </div>
+            
+            <div class="space-y-3 text-left">
+                <div>
+                    <label class="text-xs text-gray-400 ml-1">新密码</label>
+                    <input type="password" v-model="passForm.new" placeholder="输入新密码" class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition text-center tracking-widest">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 ml-1">确认密码</label>
+                    <input type="password" v-model="passForm.confirm" placeholder="再次输入新密码" class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition text-center tracking-widest">
+                </div>
+                
+                <button @click="doChangePassword" :disabled="loading" class="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-lg transition font-bold mt-2 disabled:opacity-50">
+                    {{ loading ? '修改中...' : '确认修改' }}
+                </button>
+                <button v-if="!form.forceChange" @click="showChangePassModal = false" class="w-full text-xs text-white/40 hover:text-white mt-2">暂不修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑 模态框 -->
+    <div v-if="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showModal = false">
+        <div class="glass-panel rounded-2xl w-full max-w-lg p-6 shadow-2xl transform transition-all">
+            <h3 class="text-xl font-bold mb-6 flex items-center gap-2">
+                <i class="ph" :class="isEditing ? 'ph-pencil-simple' : 'ph-plus-circle'"></i>
+                {{ isEditing ? '编辑收藏' : '添加新收藏' }}
+            </h3>
+            
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="col-span-1 md:col-span-2">
+                        <label class="text-xs text-gray-400 ml-1 block mb-1">网址 (URL)</label>
+                        <input v-model="form.url" type="url" placeholder="https://example.com" class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition">
+                    </div>
+                    
+                    <div>
+                        <label class="text-xs text-gray-400 ml-1 block mb-1">标题</label>
+                        <input v-model="form.title" type="text" placeholder="网站名称" class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition">
+                    </div>
+                    
+                    <div>
+                        <label class="text-xs text-gray-400 ml-1 block mb-1">分类</label>
+                        <input v-model="form.category" type="text" list="cat-list" placeholder="例如: 工具" class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition">
+                        <datalist id="cat-list">
+                            <option v-for="c in uniqueCategories" :value="c"></option>
+                        </datalist>
+                    </div>
+
+                    <div class="col-span-1 md:col-span-2">
+                        <label class="text-xs text-gray-400 ml-1 block mb-1">自定义图标地址 (可选)</label>
+                        <div class="flex gap-2">
+                            <input v-model="form.icon_url" type="text" placeholder="https://.../icon.png" class="flex-1 bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition">
+                            <div class="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center flex-none">
+                                <img :src="form.icon_url || 'https://unpkg.com/@phosphor-icons/core/assets/regular/globe.svg'" class="w-6 h-6 object-contain">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-span-1 md:col-span-2">
+                        <label class="text-xs text-gray-400 ml-1 block mb-1">备注 / 描述</label>
+                        <textarea v-model="form.description" rows="2" placeholder="写点什么..." class="w-full bg-white/10 border border-white/20 p-3 rounded-lg focus:border-indigo-500 outline-none transition resize-none text-sm"></textarea>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-2 mt-2 bg-white/5 p-3 rounded-xl">
+                    <label class="flex items-center justify-between cursor-pointer p-1">
+                        <span class="text-sm flex items-center gap-2"><i class="ph ph-push-pin"></i> 固定在首页</span>
+                        <div class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" v-model="form.is_pinned" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </div>
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer p-1 border-t border-white/10 pt-2">
+                        <span class="text-sm flex items-center gap-2"><i class="ph ph-arrow-square-out"></i> 新标签页打开</span>
+                        <div class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" v-model="form.open_new_tab" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button v-if="isEditing" @click="deleteBookmark(form.id); showModal=false" class="px-4 py-3 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-300 transition text-sm"><i class="ph ph-trash"></i></button>
+                    <button @click="showModal = false" class="px-6 py-3 rounded-lg hover:bg-white/10 transition text-sm ml-auto">取消</button>
+                    <button @click="saveBookmark" :disabled="loading" class="flex-1 bg-indigo-600 hover:bg-indigo-500 py-3 rounded-lg transition disabled:opacity-50 text-white font-bold shadow-lg">
+                        {{ loading ? '保存中...' : '保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态框 -->
+    <div v-if="showSettingsModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showSettingsModal = false">
+        <div class="glass-panel rounded-2xl w-full max-w-md overflow-hidden flex flex-col shadow-2xl" style="height: 500px;">
+            <div class="bg-black/20 p-6 text-center border-b border-white/10">
+                <div class="w-20 h-20 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-full mx-auto flex items-center justify-center text-3xl font-bold mb-3 shadow-lg">
+                    {{ isAuthenticated ? 'M' : 'G' }}
+                </div>
+                <h2 class="text-xl font-bold">{{ isAuthenticated ? '管理员' : '访客模式' }}</h2>
+                <p class="text-xs text-white/50 mt-1">{{ isAuthenticated ? '已获得完整权限' : '仅供预览' }}</p>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                <section>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">账户安全</h3>
+                    <div class="bg-white/5 rounded-xl p-4 space-y-3">
+                        <div v-if="!isAuthenticated">
+                            <input type="password" v-model="passwordInput" placeholder="输入访问密码" class="w-full bg-black/20 border border-white/10 p-2 rounded text-center mb-2">
+                            <button @click="login" class="w-full bg-indigo-600 py-2 rounded font-bold text-sm">解锁权限</button>
+                        </div>
+                        <div v-else class="text-center">
+                            <p class="text-sm text-green-400 mb-2">✓ 已验证身份</p>
+                            <div class="flex gap-2 justify-center">
+                                <button @click="openChangePassModal" class="text-xs px-3 py-1 bg-white/10 hover:bg-white/20 rounded transition">修改密码</button>
+                                <button @click="logout" class="text-xs text-white/60 hover:text-red-400 underline pt-1">退出登录</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section v-if="isAuthenticated">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">数据管理</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="bg-white/5 hover:bg-white/10 p-4 rounded-xl cursor-pointer text-center transition flex flex-col items-center gap-2">
+                            <i class="ph ph-upload-simple text-2xl text-blue-400"></i>
+                            <span class="text-xs">导入 HTML</span>
+                            <input type="file" accept=".html" @change="importBookmarks" class="hidden">
+                        </label>
+                        <button class="bg-white/5 hover:bg-white/10 p-4 rounded-xl cursor-pointer text-center transition flex flex-col items-center gap-2" @click="exportBookmarks">
+                            <i v-if="loading" class="ph ph-spinner animate-spin text-2xl text-green-400"></i>
+                            <i v-else class="ph ph-download-simple text-2xl text-green-400"></i>
+                            <span class="text-xs">导出备份</span>
+                        </button>
+                    </div>
+                </section>
+
+                <section>
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">关于 LinkBox</h3>
+                    <div class="text-xs text-white/40 leading-relaxed text-center">
+                        基于 Cloudflare Pages & D1 构建<br>
+                        版本 v2.0.0 (Frosted Glass UI)
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted, onUnmounted, watch } = Vue;
+
+    createApp({
+        setup() {
+            // Data
+            const bookmarks = ref([]);
+            const password = ref(localStorage.getItem('cf_bookmarks_pass') || '');
+            const isAuthenticated = computed(() => !!password.value);
+            const loading = ref(false);
+            
+            // UI State
+            const currentTime = ref('');
+            const currentDate = ref('');
+            const searchText = ref('');
+            const showAllBookmarks = ref(false);
+            const isEditMode = ref(false);
+            const showModal = ref(false);
+            const showSettingsModal = ref(false);
+            const isEditing = ref(false);
+            const drawerSearch = ref('');
+            
+            // Password Change State
+            const showChangePassModal = ref(false);
+            const passForm = ref({ new: '', confirm: '', forceChange: false });
+
+            // Batch Selection & Category Order
+            const selectedIds = ref(new Set());
+            const categorySortOrder = ref([]); // 存储分类名称顺序
+            
+            // Notification State
+            const notification = ref({ show: false, message: '', type: 'success' });
+            
+            // Drag State
+            const draggingItem = ref(null);
+            const dragOverCategory = ref(null); // 新增：记录当前拖拽悬停的分组名
+
+            // Ignore Click State (Bug fix)
+            const ignoreNextClick = ref(false);
+
+            // Forms
+            const passwordInput = ref('');
+            const defaultForm = { id: null, url: '', title: '', category: '默认', is_pinned: false, icon_url: '', open_new_tab: true, description: '' };
+            const form = ref({ ...defaultForm });
+
+            // Search Engines
+            const searchEngines = [
+                { name: 'Google', url: 'https://www.google.com/search?q=', icon: 'ph-google-logo' },
+                { name: 'Bing', url: 'https://www.bing.com/search?q=', icon: 'ph-microsoft-logo' },
+                { name: 'Baidu', url: 'https://www.baidu.com/s?wd=', icon: 'ph-paw-print' }
+            ];
+            const currentEngineIdx = ref(parseInt(localStorage.getItem('pref_engine') || 0));
+            const searchEngine = computed(() => searchEngines[currentEngineIdx.value]);
+
+            // --- Time ---
+            const updateTime = () => {
+                const now = new Date();
+                currentTime.value = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+                currentDate.value = `${now.getMonth() + 1}月${now.getDate()}日 · ${days[now.getDay()]}`;
+            };
+
+            // --- Notification ---
+            const showToast = (msg, type = 'success') => {
+                notification.value = { show: true, message: msg, type };
+                setTimeout(() => notification.value.show = false, 3000);
+            };
+
+            // --- API Helpers ---
+            const getHeaders = () => {
+                const h = { 'Content-Type': 'application/json' };
+                if (password.value) h['x-auth-password'] = password.value;
+                return h;
+            };
+
+            const loadBookmarks = async () => {
+                try {
+                    const res = await fetch('/api/bookmarks', { headers: getHeaders() });
+                    if(res.ok) {
+                        bookmarks.value = await res.json();
+                    } else if (res.status === 401) {
+                        // 如果 session 中的密码失效，自动登出
+                        if (isAuthenticated.value) logout();
+                    }
+                } catch(e) {}
+            };
+
+            // --- Computed ---
+            const pinnedBookmarks = computed(() => {
+                return bookmarks.value.filter(b => b.is_pinned).sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0));
+            });
+
+            const uniqueCategories = computed(() => {
+                const cats = new Set(bookmarks.value.map(b => b.category || '默认'));
+                return Array.from(cats).sort();
+            });
+
+            // 带排序的分类列表
+            const sortedCategories = computed(() => {
+                const cats = uniqueCategories.value;
+                // 根据 localstorage 的顺序排序，未记录的放最后
+                const order = categorySortOrder.value;
+                return [...cats].sort((a, b) => {
+                    const idxA = order.indexOf(a);
+                    const idxB = order.indexOf(b);
+                    if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+                    if (idxA === -1) return 1;
+                    if (idxB === -1) return -1;
+                    return idxA - idxB;
+                });
+            });
+
+            const filteredDrawerList = computed(() => {
+                let list = bookmarks.value;
+                if(drawerSearch.value) {
+                    const k = drawerSearch.value.toLowerCase();
+                    list = list.filter(b => b.title.toLowerCase().includes(k) || b.url.toLowerCase().includes(k));
+                }
+                
+                // Group items
+                const groups = {};
+                list.forEach(b => {
+                    const c = b.category || '默认';
+                    if(!groups[c]) groups[c] = [];
+                    groups[c].push(b);
+                });
+
+                // Return array based on sortedCategories
+                return sortedCategories.value.map(cat => ({
+                    name: cat,
+                    items: groups[cat] || []
+                })).filter(g => g.items.length > 0);
+            });
+
+            // --- Batch Actions ---
+            const toggleSelectAll = () => {
+                // 如果已经有选中的，且不是全部，则全选；如果是全部，则反选(全不选)
+                // 这里简单点：如果选中的数量等于当前显示总数，则清空；否则全选
+                const allVisible = filteredDrawerList.value.flatMap(g => g.items).map(b => b.id);
+                if (selectedIds.value.size === allVisible.length) {
+                    selectedIds.value.clear();
+                } else {
+                    allVisible.forEach(id => selectedIds.value.add(id));
+                }
+            };
+
+            const batchDelete = async () => {
+                if (selectedIds.value.size === 0) return;
+                if (!confirm(`确定删除选中的 ${selectedIds.value.size} 个书签吗？`)) return;
+                
+                loading.value = true;
+                try {
+                    for (const id of selectedIds.value) {
+                        await fetch(`/api/bookmarks?id=${id}`, { method: 'DELETE', headers: getHeaders() });
+                    }
+                    bookmarks.value = bookmarks.value.filter(b => !selectedIds.value.has(b.id));
+                    selectedIds.value.clear();
+                    showToast('批量删除成功');
+                } catch(e) {
+                    alert('部分删除失败');
+                } finally {
+                    loading.value = false;
+                }
+            };
+
+            const batchMove = async () => {
+                if (selectedIds.value.size === 0) return;
+                // 显示所有可用分类
+                const targetCat = prompt(`将 ${selectedIds.value.size} 个书签移动到哪个分组？\n(输入现有分组名或新分组名)`);
+                if (!targetCat) return;
+
+                loading.value = true;
+                try {
+                    const ids = Array.from(selectedIds.value);
+                    for (const id of ids) {
+                        await fetch('/api/bookmarks', {
+                            method: 'PATCH',
+                            headers: getHeaders(),
+                            body: JSON.stringify({ id, category: targetCat })
+                        });
+                        // Update local
+                        const bm = bookmarks.value.find(b => b.id === id);
+                        if(bm) bm.category = targetCat;
+                    }
+                    selectedIds.value.clear();
+                    showToast(`已移动到 "${targetCat}"`);
+                } catch(e) {
+                    alert('移动失败');
+                } finally {
+                    loading.value = false;
+                }
+            };
+
+            const moveCategory = (catName, direction) => {
+                const currentOrder = [...sortedCategories.value];
+                const idx = currentOrder.indexOf(catName);
+                if (idx === -1) return;
+                
+                const newIdx = idx + direction;
+                if (newIdx < 0 || newIdx >= currentOrder.length) return;
+
+                // Swap
+                [currentOrder[idx], currentOrder[newIdx]] = [currentOrder[newIdx], currentOrder[idx]];
+                categorySortOrder.value = currentOrder;
+                localStorage.setItem('cf_bookmarks_cat_order', JSON.stringify(currentOrder));
+            };
+
+            // --- Interaction: Flip & Context Menu ---
+            const handleBackgroundRightClick = () => {
+                showAllBookmarks.value = !showAllBookmarks.value;
+            };
+
+            const handleItemContextMenu = (bm) => {
+                if (!isAuthenticated.value) return alert('请先登录');
+                isEditing.value = true;
+                form.value = { ...bm, open_new_tab: bm.open_new_tab !== 0, description: bm.description || '' }; 
+                showModal.value = true;
+            };
+
+            const globalContextMenuHandler = (e) => {
+                if (showModal.value || showSettingsModal.value || showChangePassModal.value) return;
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                e.preventDefault(); 
+                handleBackgroundRightClick();
+            };
+
+            // --- Interaction: Long Press & Drag ---
+            let pressTimer = null;
+            const startLongPress = (bm) => {
+                pressTimer = setTimeout(() => {
+                    if (isAuthenticated.value) {
+                        isEditMode.value = true;
+                        if (navigator.vibrate) navigator.vibrate(50);
+                        // Bug Fix: 忽略接下来的点击事件，防止立即退出编辑模式
+                        ignoreNextClick.value = true;
+                        setTimeout(() => ignoreNextClick.value = false, 500);
+                    }
+                }, 600);
+            };
+            const cancelLongPress = () => {
+                clearTimeout(pressTimer);
+            };
+            const exitEditMode = (e) => {
+                // Bug Fix: 如果刚进入编辑模式，忽略这次点击
+                if (ignoreNextClick.value) return;
+
+                // 如果点击到底部工具栏内部，不退出
+                if (e.target.closest('.glass-panel')) return;
+                if (isEditMode.value && !e.target.closest('.group')) {
+                    isEditMode.value = false;
+                    selectedIds.value.clear(); // 退出时清空选择
+                }
+            };
+
+            // --- Drag & Drop ---
+            
+            // 修正后的 dragStart，增加 source 区分
+            const onDragStart = (e, bm, source = 'pinned') => {
+                draggingItem.value = { ...bm, source }; // 记录拖拽对象及其来源
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.dropEffect = 'move';
+                setTimeout(() => e.target.classList.add('ghost'), 0);
+            };
+
+            // 首页排序 DragEnter
+            const onDragEnter = (targetBm) => {
+                // 只处理首页排序 (source === 'pinned')
+                if (!draggingItem.value || draggingItem.value.source !== 'pinned' || draggingItem.value.id === targetBm.id) return;
+                
+                let currentList = bookmarks.value.filter(b => b.is_pinned).sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0));
+                
+                const dragIndex = currentList.findIndex(b => b.id === draggingItem.value.id);
+                const targetIndex = currentList.findIndex(b => b.id === targetBm.id);
+
+                if (dragIndex !== -1 && targetIndex !== -1) {
+                    const [item] = currentList.splice(dragIndex, 1);
+                    currentList.splice(targetIndex, 0, item);
+
+                    const total = currentList.length;
+                    currentList.forEach((bm, idx) => {
+                        bm.sort_order = total - idx;
+                    });
+                }
+            };
+
+            // 首页排序 DragEnd
+            const onDragEnd = async (e) => {
+                e.target.classList.remove('ghost');
+                
+                // 如果是首页排序，结束时保存
+                if (draggingItem.value && draggingItem.value.source === 'pinned') {
+                    const pinned = bookmarks.value.filter(b => b.is_pinned);
+                    try {
+                        for (const bm of pinned) {
+                            await fetch('/api/bookmarks', {
+                                method: 'PATCH',
+                                headers: getHeaders(),
+                                body: JSON.stringify({ id: bm.id, sort_order: bm.sort_order })
+                            });
+                        }
+                    } catch(err) { console.error('排序保存失败'); }
+                }
+                
+                draggingItem.value = null;
+                dragOverCategory.value = null; // 清除背面高亮
+            };
+
+            // 背面分组 DragEnter
+            const onDrawerDragEnter = (catName) => {
+                // 仅当编辑模式下，且拖拽源是抽屉里的项目时触发
+                if (!isEditMode.value || !draggingItem.value || draggingItem.value.source !== 'drawer') return;
+                if (draggingItem.value.category === catName) return; // 同组不高亮
+                dragOverCategory.value = catName;
+            };
+
+            // 背面分组 Drop (移动分组核心逻辑)
+            const onDrawerDrop = async (catName) => {
+                dragOverCategory.value = null;
+                const item = draggingItem.value;
+                if (!item || item.source !== 'drawer' || item.category === catName) return;
+
+                // 乐观更新
+                const targetBm = bookmarks.value.find(b => b.id === item.id);
+                if (targetBm) {
+                    const oldCat = targetBm.category;
+                    targetBm.category = catName;
+                    
+                    try {
+                        await fetch('/api/bookmarks', {
+                            method: 'PATCH',
+                            headers: getHeaders(),
+                            body: JSON.stringify({ id: item.id, category: catName })
+                        });
+                        showToast(`已移动到 "${catName}"`);
+                    } catch (e) {
+                        targetBm.category = oldCat; // 回滚
+                        alert('移动失败');
+                    }
+                }
+            };
+
+            // --- Logic: Search & Open ---
+            const switchEngine = () => {
+                currentEngineIdx.value = (currentEngineIdx.value + 1) % searchEngines.length;
+                localStorage.setItem('pref_engine', currentEngineIdx.value);
+            };
+            const doSearch = () => {
+                if(!searchText.value) return;
+                window.location.href = searchEngine.value.url + encodeURIComponent(searchText.value);
+            };
+            
+            const handleItemClick = (bm, e) => {
+                if(isEditMode.value) {
+                    // 编辑模式下点击是选中/取消选中
+                    if (showAllBookmarks.value) {
+                        if (selectedIds.value.has(bm.id)) selectedIds.value.delete(bm.id);
+                        else selectedIds.value.add(bm.id);
+                    }
+                    e.preventDefault();
+                    return;
+                }
+                const target = bm.open_new_tab ? '_blank' : '_self';
+                window.open(bm.url, target);
+            };
+
+            const getIcon = (bm) => {
+                if (bm.icon_url) return bm.icon_url;
+                try {
+                    const domain = new URL(bm.url).hostname;
+                    return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`;
+                } catch(e) { return ''; }
+            };
+
+            // --- CRUD & Settings ---
+            const openAddModal = () => {
+                if (!isAuthenticated.value) return alert('请先登录');
+                isEditing.value = false;
+                form.value = { ...defaultForm, is_pinned: false }; 
+                showModal.value = true;
+            };
+
+            const togglePin = async (bm) => {
+                if(!isAuthenticated.value) return alert('请先登录');
+                const originalState = bm.is_pinned;
+                bm.is_pinned = !originalState;
+                if(bm.is_pinned) bm.sort_order = 9999; 
+
+                try {
+                    await fetch('/api/bookmarks', {
+                        method: 'PATCH',
+                        headers: getHeaders(),
+                        body: JSON.stringify({ id: bm.id, is_pinned: bm.is_pinned, sort_order: bm.sort_order })
+                    });
+                    showToast(bm.is_pinned ? '已添加到首页' : '已从首页移除');
+                } catch(e) {
+                    bm.is_pinned = originalState;
+                }
+            };
+
+            const renameCategory = async (oldName, list) => {
+                const newName = prompt("请输入新的分类名称", oldName);
+                if (newName && newName !== oldName) {
+                    if(!confirm(`确定将 "${oldName}" 分类下的 ${list.length} 个书签移动到 "${newName}" 吗？`)) return;
+                    
+                    loading.value = true;
+                    try {
+                        for(const bm of list) {
+                            await fetch('/api/bookmarks', {
+                                method: 'PATCH',
+                                headers: getHeaders(),
+                                body: JSON.stringify({ id: bm.id, category: newName })
+                            });
+                            bm.category = newName; // 立即更新本地状态
+                        }
+                        showToast('分类重命名成功');
+                    } catch(e) {
+                        alert("部分更新可能失败，请刷新");
+                    } finally {
+                        loading.value = false;
+                    }
+                }
+            };
+
+            const saveBookmark = async () => {
+                if (!form.value.url) return alert('请输入网址');
+                loading.value = true;
+                
+                try {
+                    if (!isEditing.value) {
+                        const normalize = u => u.replace(/\/$/, '').toLowerCase();
+                        const newUrl = normalize(form.value.url);
+                        const exists = bookmarks.value.some(b => normalize(b.url) === newUrl);
+                        if (exists) {
+                            if (!confirm('该网址已经添加过了，是否继续添加？')) {
+                                loading.value = false;
+                                return;
+                            }
+                        }
+                    }
+
+                    const method = isEditing.value ? 'PATCH' : 'POST';
+                    const payload = { ...form.value }; 
+                    const res = await fetch('/api/bookmarks', {
+                        method: method,
+                        headers: getHeaders(),
+                        body: JSON.stringify(payload)
+                    });
+                    if(res.ok) {
+                        showModal.value = false;
+                        loadBookmarks();
+                        showToast(isEditing.value ? '修改成功' : '添加成功');
+                    } else {
+                        alert('保存失败');
+                    }
+                } finally { loading.value = false; }
+            };
+
+            const deleteBookmark = async (id) => {
+                if(!confirm('确认删除此收藏？')) return;
+                await fetch(`/api/bookmarks?id=${id}`, { method: 'DELETE', headers: getHeaders() });
+                bookmarks.value = bookmarks.value.filter(b => b.id !== id);
+                showToast('已删除', 'warning');
+            };
+
+            const openSettings = () => {
+                showSettingsModal.value = true;
+            };
+
+            const openChangePassModal = () => {
+                passForm.value = { new: '', confirm: '', forceChange: false };
+                showChangePassModal.value = true;
+                showSettingsModal.value = false;
+            };
+
+            const doChangePassword = async () => {
+                if (passForm.value.new !== passForm.value.confirm) return alert('两次密码输入不一致');
+                if (passForm.value.new.length < 4) return alert('密码长度至少4位');
+                
+                loading.value = true;
+                try {
+                    const res = await fetch('/api/password', {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify({ password: passForm.value.new })
+                    });
+                    
+                    if (res.ok) {
+                        showToast('密码修改成功，请重新登录');
+                        password.value = '';
+                        localStorage.removeItem('cf_bookmarks_pass');
+                        showChangePassModal.value = false;
+                        bookmarks.value = [];
+                    } else {
+                        alert('修改失败');
+                    }
+                } finally {
+                    loading.value = false;
+                }
+            };
+
+            const login = async () => {
+                if (!passwordInput.value) return;
+                
+                loading.value = true;
+                // 1. 尝试用输入的密码去请求数据，以此验证密码是否正确
+                const tempPassword = passwordInput.value;
+                const h = { 'Content-Type': 'application/json', 'x-auth-password': tempPassword };
+                
+                try {
+                    const res = await fetch('/api/bookmarks', { headers: h });
+                    if (res.ok) {
+                        // 2. 验证成功
+                        password.value = tempPassword;
+                        localStorage.setItem('cf_bookmarks_pass', tempPassword);
+                        bookmarks.value = await res.json(); // 直接使用这次请求的数据
+                        
+                        // 默认密码检查
+                        if (password.value === 'admin') {
+                            showSettingsModal.value = false;
+                            passForm.value = { new: '', confirm: '', forceChange: true };
+                            showChangePassModal.value = true;
+                        } else {
+                            showToast('登录成功');
+                        }
+                    } else if (res.status === 401) {
+                        alert('密码错误');
+                        passwordInput.value = ''; // 清空错误密码
+                    } else {
+                        alert('登录失败，请重试');
+                    }
+                } catch(e) {
+                    alert('网络错误');
+                } finally {
+                    loading.value = false;
+                }
+            };
+            const logout = () => {
+                password.value = '';
+                localStorage.removeItem('cf_bookmarks_pass');
+                bookmarks.value = [];
+            };
+
+            // --- Import HTML ---
+            const importBookmarks = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const text = await file.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, "text/html");
+                const links = doc.querySelectorAll('a');
+                
+                if(!confirm(`发现 ${links.length} 个书签，确定导入吗？(耗时较长)`)) return;
+
+                let successCount = 0;
+                for (const link of links) {
+                    try {
+                        let category = '导入';
+                        const dl = link.closest('dl');
+                        if (dl) {
+                            const prev = dl.previousElementSibling; 
+                            if (prev) {
+                                const h3 = prev.tagName === 'H3' ? prev : prev.querySelector('h3');
+                                if (h3) category = h3.textContent.trim();
+                            }
+                        }
+
+                        // Check for PINNED attribute (robust check)
+                        const getAttr = (el, name) => el.getAttribute(name) || el.getAttribute(name.toLowerCase()) || el.getAttribute(name.toUpperCase());
+                        
+                        const pinVal = getAttr(link, 'PINNED');
+                        const isPinned = pinVal === '1' || pinVal === 'true';
+                        
+                        const iconUrl = getAttr(link, 'ICON');
+
+                        const payload = {
+                            url: link.href,
+                            title: link.textContent,
+                            category: category,
+                            is_pinned: isPinned,
+                            icon_url: iconUrl
+                        };
+                        await fetch('/api/bookmarks', {
+                            method: 'POST',
+                            headers: getHeaders(),
+                            body: JSON.stringify(payload)
+                        });
+                        successCount++;
+                    } catch(err) {}
+                }
+                showToast(`成功导入 ${successCount} 个书签`);
+                loadBookmarks();
+            };
+
+            // --- Export HTML ---
+            const exportBookmarks = async () => {
+                if (bookmarks.value.length === 0) return showToast('暂无书签可导出', 'warning');
+                
+                loading.value = true;
+                
+                // Allow UI to update before heavy processing
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                let html = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<!-- This is an automatically generated file.
+     It will be read and overwritten.
+     DO NOT EDIT! -->
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+`;
+                // 按分类分组
+                const groups = {};
+                bookmarks.value.forEach(b => {
+                    const cat = b.category || '未分类';
+                    if (!groups[cat]) groups[cat] = [];
+                    groups[cat].push(b);
+                });
+
+                for (const cat in groups) {
+                    html += `    <DT><H3>${cat}</H3>\n    <DL><p>\n`;
+                    groups[cat].forEach(b => {
+                        const date = Math.floor(Date.now() / 1000);
+                        // Ensure attributes are separated by spaces and values are quoted
+                        html += `        <DT><A HREF="${b.url}" ADD_DATE="${date}" ICON="${b.icon_url || ''}" PINNED="${b.is_pinned ? 1 : 0}">${b.title}</A>\n`;
+                    });
+                    html += `    </DL><p>\n`;
+                }
+                html += `</DL><p>`;
+
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bookmarks_backup_${new Date().toISOString().slice(0,10)}.html`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                loading.value = false;
+                showToast('备份已导出');
+            };
+
+            onMounted(() => {
+                setInterval(updateTime, 1000);
+                updateTime();
+                
+                // 自动尝试登录（如果本地有保存的密码）
+                if(password.value) {
+                    // 这里我们为了用户体验，可以先假装登录成功（显示界面），然后再后台静默验证
+                    // 但为了安全和逻辑一致性，还是走验证流程比较好，或者就在 loadBookmarks 里处理失效
+                    loadBookmarks();
+                    
+                    // 特殊处理：如果是 admin，强制弹窗
+                    if (password.value === 'admin') {
+                        // 需要延迟一下等待 UI 渲染
+                        setTimeout(() => {
+                            if(!showSettingsModal.value) { // 避免冲突
+                                passForm.value = { new: '', confirm: '', forceChange: true };
+                                showChangePassModal.value = true;
+                            }
+                        }, 500);
+                    }
+                }
+                
+                document.addEventListener('contextmenu', globalContextMenuHandler);
+                
+                // Load category order
+                const savedOrder = localStorage.getItem('cf_bookmarks_cat_order');
+                if (savedOrder) categorySortOrder.value = JSON.parse(savedOrder);
+            });
+
+            onUnmounted(() => {
+                document.removeEventListener('contextmenu', globalContextMenuHandler);
+            });
+
+            return {
+                bookmarks, pinnedBookmarks, filteredDrawerList, uniqueCategories,
+                currentTime, currentDate, searchText, searchEngine, drawerSearch,
+                showAllBookmarks, isEditMode, showModal, showSettingsModal, isEditing,
+                form, passwordInput, isAuthenticated, loading, draggingItem, notification,
+                selectedIds, dragOverCategory,
+                showChangePassModal, passForm, openChangePassModal, doChangePassword,
+                switchEngine, doSearch, handleItemClick, getIcon,
+                handleBackgroundRightClick, handleItemContextMenu, 
+                startLongPress, cancelLongPress, exitEditMode,
+                onDragStart, onDragEnter, onDragEnd, onDrawerDragEnter, onDrawerDrop,
+                openAddModal, saveBookmark, deleteBookmark, openSettings, togglePin,
+                login, logout, importBookmarks, exportBookmarks, renameCategory,
+                toggleSelectAll, batchDelete, batchMove, moveCategory
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
